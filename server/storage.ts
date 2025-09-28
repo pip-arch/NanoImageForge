@@ -8,6 +8,7 @@ export interface IStorage {
   getEditSession(id: string): Promise<EditSession | undefined>;
   updateEditSession(id: string, updates: Partial<EditSession>): Promise<EditSession | undefined>;
   getAllEditSessions(): Promise<EditSession[]>;
+  getSessionsByBatchId(batchId: string): Promise<EditSession[]>;
   
   // Edit History
   addEditHistory(history: InsertEditHistory): Promise<EditHistory>;
@@ -124,6 +125,14 @@ export class DatabaseStorage implements IStorage {
     return await db
       .select()
       .from(editSessions)
+      .orderBy(editSessions.createdAt);
+  }
+
+  async getSessionsByBatchId(batchId: string): Promise<EditSession[]> {
+    return await db
+      .select()
+      .from(editSessions)
+      .where(eq(editSessions.batchId, batchId))
       .orderBy(editSessions.createdAt);
   }
 

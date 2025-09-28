@@ -5,6 +5,7 @@ import { z } from "zod";
 
 export const editSessions = pgTable("edit_sessions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  batchId: varchar("batch_id"), // For grouping multiple images processed together
   originalImageUrl: text("original_image_url").notNull(),
   currentImageUrl: text("current_image_url"),
   prompt: text("prompt"),
@@ -38,6 +39,7 @@ export const templates = pgTable("templates", {
 });
 
 export const insertEditSessionSchema = createInsertSchema(editSessions).pick({
+  batchId: true,
   originalImageUrl: true,
   prompt: true,
   settings: true,

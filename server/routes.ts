@@ -189,6 +189,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get sessions by batch ID
+  app.get("/api/sessions/batch/:batchId", async (req, res) => {
+    try {
+      const { batchId } = req.params;
+      const sessions = await storage.getSessionsByBatchId(batchId);
+      res.json(sessions);
+    } catch (error) {
+      console.error("Error fetching batch sessions:", error);
+      res.status(500).json({ error: "Failed to fetch batch sessions" });
+    }
+  });
+
   app.patch("/api/sessions/:id", async (req, res) => {
     try {
       const updates = req.body;

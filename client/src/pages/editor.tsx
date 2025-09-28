@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import ImageUploader from "@/components/ImageUploader";
 import BeforeAfterComparison from "@/components/BeforeAfterComparison";
 import ProcessingStatus from "@/components/ProcessingStatus";
 import TemplateSelector from "@/components/TemplateSelector";
+import BatchProcessor from "@/components/BatchProcessor";
 import type { EditSession, Template, EditHistory } from "@shared/schema";
 
 export default function Editor() {
@@ -216,8 +218,18 @@ export default function Editor() {
       </header>
 
       <div className="flex h-[calc(100vh-80px)]">
-        {/* Left Sidebar */}
-        <aside className="w-80 bg-card border-r border-border p-6 overflow-y-auto">
+        {/* Mode Tabs */}
+        <Tabs defaultValue="single" className="flex-1">
+          <div className="border-b border-border px-6 py-2">
+            <TabsList className="grid w-60 grid-cols-2">
+              <TabsTrigger value="single" data-testid="tab-single">Single Image</TabsTrigger>
+              <TabsTrigger value="batch" data-testid="tab-batch">Batch Processing</TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="single" className="flex h-[calc(100vh-120px)] m-0">
+            {/* Left Sidebar */}
+            <aside className="w-80 bg-card border-r border-border p-6 overflow-y-auto">
           <div className="space-y-6">
             {/* Upload Section */}
             <div className="space-y-4">
@@ -555,6 +567,21 @@ export default function Editor() {
             </Card>
           </div>
         </aside>
+          </TabsContent>
+
+          <TabsContent value="batch" className="flex h-[calc(100vh-120px)] m-0">
+            <div className="flex-1 p-6 overflow-y-auto">
+              <BatchProcessor 
+                onBatchComplete={(batchId) => {
+                  toast({
+                    title: "Batch processing complete",
+                    description: `Batch ${batchId} completed successfully`,
+                  });
+                }}
+              />
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Template Selection Modal */}
