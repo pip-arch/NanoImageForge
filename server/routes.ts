@@ -4,6 +4,67 @@ import { storage } from "./storage";
 import { insertEditSessionSchema, insertEditHistorySchema } from "@shared/schema";
 import { ObjectStorageService } from "./objectStorage";
 
+// Import required functions for signed URL generation
+async function parseObjectPath(path: string): Promise<{
+  bucketName: string;
+  objectName: string;
+}> {
+  if (!path.startsWith("/")) {
+    path = `/${path}`;
+  }
+  const pathParts = path.split("/");
+  if (pathParts.length < 3) {
+    throw new Error("Invalid path: must contain at least a bucket name");
+  }
+
+  const bucketName = pathParts[1];
+  const objectName = pathParts.slice(2).join("/");
+
+  return {
+    bucketName,
+    objectName,
+  };
+}
+
+async function signObjectURL({
+  bucketName,
+  objectName,
+  method,
+  ttlSec,
+}: {
+  bucketName: string;
+  objectName: string;
+  method: "GET" | "PUT" | "DELETE" | "HEAD";
+  ttlSec: number;
+}): Promise<string> {
+  const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
+  const request = {
+    bucket_name: bucketName,
+    object_name: objectName,
+    method,
+    expires_at: new Date(Date.now() + ttlSec * 1000).toISOString(),
+  };
+  const response = await fetch(
+    `${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Failed to sign object URL, errorcode: ${response.status}, ` +
+        `make sure you're running on Replit`
+    );
+  }
+
+  const { signed_url: signedURL } = await response.json();
+  return signedURL;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const objectStorage = new ObjectStorageService();
 
@@ -30,6 +91,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error getting upload URL:", error);
       res.status(500).json({ error: "Failed to generate upload URL" });
+    }
+  });
+
+  // Proxy endpoint for fal.ai to access private images
+  app.get("/api/proxy-image", async (req, res) => {
+    try {
+      const objectPath = req.query.path as string;
+      if (!objectPath || !objectPath.startsWith('/objects/')) {
+        return res.status(400).json({ error: "Invalid object path" });
+      }
+
+      console.log('Proxy request for object path:', objectPath);
+      const objectFile = await objectStorage.getObjectEntityFile(objectPath);
+      
+      // Stream the file directly to the response
+      await objectStorage.downloadObject(objectFile, res);
+    } catch (error) {
+      console.error("Error proxying image:", error);
+      if (error.name === 'ObjectNotFoundError') {
+        return res.status(404).json({ error: "Image not found" });
+      }
+      return res.status(500).json({ error: "Failed to proxy image" });
     }
   });
 
@@ -115,7 +198,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new Error("FAL_API_KEY not configured");
       }
 
+      // Convert image URL to publicly accessible URL for fal.ai
+      let publicImageUrl = imageUrl;
+      
+      console.log('Processing image URL:', { imageUrl, type: typeof imageUrl });
+      
+      if (imageUrl.startsWith('/objects/')) {
+        // Standard object path - generate signed URL
+        try {
+          const objectFile = await objectStorage.getObjectEntityFile(imageUrl);
+          const { bucketName, objectName } = parseObjectPath(imageUrl);
+          
+          const signedUrl = await signObjectURL({
+            bucketName,
+            objectName,
+            method: "GET",
+            ttlSec: 3600,
+          });
+          
+          publicImageUrl = signedUrl;
+          console.log('Generated signed URL for object path:', { imageUrl, publicImageUrl });
+        } catch (error) {
+          console.error('Failed to generate signed URL for object path:', error);
+          const baseUrl = req.protocol + '://' + req.get('host');
+          publicImageUrl = `${baseUrl}${imageUrl}`;
+        }
+      } else if (imageUrl.startsWith('https://')) {
+        // External URL - create a proxy endpoint for fal.ai to access
+        try {
+          const normalizedPath = await objectStorage.normalizeObjectEntityPath(imageUrl);
+          console.log('Normalized object path:', { imageUrl, normalizedPath });
+          
+          if (normalizedPath.startsWith('/objects/')) {
+            // Create a public proxy URL that fal.ai can access
+            const baseUrl = req.protocol + '://' + req.get('host');
+            publicImageUrl = `${baseUrl}/api/proxy-image?path=${encodeURIComponent(normalizedPath)}`;
+            console.log('Generated proxy URL for fal.ai:', { normalizedPath, publicImageUrl });
+          } else {
+            // If normalization didn't work, use the original URL
+            publicImageUrl = imageUrl;
+            console.log('Using original URL as it could not be normalized:', imageUrl);
+          }
+        } catch (error) {
+          console.error('Failed to normalize and create proxy URL:', error);
+          // Use the original URL as fallback
+          publicImageUrl = imageUrl;
+          console.log('Using original URL as fallback:', imageUrl);
+        }
+      } else {
+        console.log('Image URL is already a full URL:', imageUrl);
+      }
+
+      console.log('Processing image with fal.ai:', {
+        originalImageUrl: imageUrl,
+        publicImageUrl,
+        prompt,
+        settings
+      });
+
       const startTime = Date.now();
+      const requestBody = {
+        image_urls: [publicImageUrl],
+        prompt: prompt
+      };
+
+      console.log('fal.ai request body:', JSON.stringify(requestBody, null, 2));
 
       const response = await fetch("https://fal.run/fal-ai/nano-banana/edit", {
         method: "POST",
@@ -123,15 +270,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           "Content-Type": "application/json",
           "Authorization": `Key ${falApiKey}`,
         },
-        body: JSON.stringify({
-          image_url: imageUrl,
-          prompt: prompt,
-          ...settings
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
-        throw new Error(`fal.ai API error: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('fal.ai API error response:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText
+        });
+        throw new Error(`fal.ai API error: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const result = await response.json();

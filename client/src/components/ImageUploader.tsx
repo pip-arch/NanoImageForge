@@ -40,10 +40,13 @@ export default function ImageUploader({ onImageUploaded, 'data-testid': testId }
     }
     
     // Convert upload URL to object path
-    const url = new URL(uploadURL);
-    const objectPath = `/objects${url.pathname.split('/').slice(2).join('/')}`;
+    // The uploadURL is a signed URL for object storage uploads
+    // We need to extract just the entity ID part for the object path
+    // The backend will use normalizeObjectEntityPath to convert this properly
+    console.log('Converting upload URL to object path:', { uploadURL });
     
-    return objectPath;
+    // For now, return the full upload URL and let the backend normalize it
+    return uploadURL;
   }, []);
 
   const handleDrop = useCallback(async (acceptedFiles: File[]) => {
