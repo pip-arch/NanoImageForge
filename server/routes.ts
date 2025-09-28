@@ -5,10 +5,10 @@ import { insertEditSessionSchema, insertEditHistorySchema } from "@shared/schema
 import { ObjectStorageService } from "./objectStorage";
 
 // Import required functions for signed URL generation
-async function parseObjectPath(path: string): Promise<{
+function parseObjectPath(path: string): {
   bucketName: string;
   objectName: string;
-}> {
+} {
   if (!path.startsWith("/")) {
     path = `/${path}`;
   }
@@ -264,6 +264,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log('fal.ai request body:', JSON.stringify(requestBody, null, 2));
 
+      console.log('Calling fal.ai API with endpoint: https://fal.run/fal-ai/nano-banana/edit');
+      
       const response = await fetch("https://fal.run/fal-ai/nano-banana/edit", {
         method: "POST",
         headers: {
@@ -272,6 +274,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
         body: JSON.stringify(requestBody),
       });
+
+      console.log('fal.ai API response status:', response.status);
+      console.log('fal.ai API response headers:', Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -283,24 +288,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new Error(`fal.ai API error: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
-      const result = await response.json();
+      const responseText = await response.text();
+      console.log('fal.ai API raw response:', responseText);
+      
+      let result;
+      try {
+        result = JSON.parse(responseText);
+        console.log('fal.ai API parsed response:', result);
+      } catch (parseError) {
+        console.error('Failed to parse fal.ai response as JSON:', parseError);
+        throw new Error(`Invalid response from fal.ai API: ${responseText}`);
+      }
       const processingTime = Date.now() - startTime;
 
-      if (!result.image || !result.image.url) {
-        throw new Error("Invalid response from fal.ai API");
+      // Extract the image URL from the response
+      let processedImageUrl;
+      if (result.images && Array.isArray(result.images) && result.images.length > 0) {
+        processedImageUrl = result.images[0].url;
+      } else if (result.image && result.image.url) {
+        processedImageUrl = result.image.url;
+      } else {
+        console.error('Invalid fal.ai response structure:', result);
+        throw new Error("Invalid response from fal.ai API - no image URL found");
       }
+
+      console.log('Extracted image URL from fal.ai response:', processedImageUrl);
 
       // Update session with result
       const updatedSession = await storage.updateEditSession(sessionId, {
         status: 'completed',
-        currentImageUrl: result.image.url,
+        currentImageUrl: processedImageUrl,
         processingCompletedAt: new Date(),
       });
 
       // Add to edit history
       await storage.addEditHistory({
         sessionId,
-        imageUrl: result.image.url,
+        imageUrl: processedImageUrl,
         prompt,
         processingTime,
       });
@@ -308,7 +332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         session: updatedSession,
-        result: result.image.url,
+        result: processedImageUrl,
         processingTime,
       });
 
