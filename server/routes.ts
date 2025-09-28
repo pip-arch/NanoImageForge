@@ -137,8 +137,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Proxy endpoint for fal.ai to access private images
-  app.get("/api/proxy-image", async (req, res) => {
+  // Proxy endpoint for fal.ai to access private images (authentication required)
+  app.get("/api/proxy-image", isAuthenticated, async (req: any, res) => {
     try {
       const objectPath = req.query.path as string;
       if (!objectPath || !objectPath.startsWith('/objects/')) {
@@ -159,8 +159,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Serve private objects
-  app.get("/objects/:objectPath(*)", async (req, res) => {
+  // Serve private objects (authentication required)
+  app.get("/objects/:objectPath(*)", isAuthenticated, async (req: any, res) => {
     try {
       const objectFile = await objectStorage.getObjectEntityFile(req.path);
       objectStorage.downloadObject(objectFile, res);
@@ -426,7 +426,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: 'completed',
         currentImageUrl: processedImageUrl,
         processingCompletedAt: new Date(),
-      });
+      }, userId);
 
       // Add to edit history
       await storage.addEditHistory({
@@ -450,7 +450,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateEditSession(sessionId, {
         status: 'error',
         processingCompletedAt: new Date(),
-      });
+      }, userId);
 
       res.status(500).json({ 
         error: "Failed to process image",
