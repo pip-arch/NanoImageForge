@@ -20,6 +20,7 @@ export default function Editor() {
   const [quality, setQuality] = useState("high");
   const [outputFormat, setOutputFormat] = useState("png");
   const [processingSpeed, setProcessingSpeed] = useState("7");
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -124,6 +125,8 @@ export default function Editor() {
       quality,
       format: outputFormat,
       speed: parseInt(processingSpeed),
+      // Include template-specific settings for advanced models
+      ...(selectedTemplate?.settings || {}),
     };
 
     processImageMutation.mutate({
@@ -136,6 +139,7 @@ export default function Editor() {
 
   const handleTemplateSelect = useCallback((template: Template) => {
     setPrompt(template.prompt);
+    setSelectedTemplate(template);
     setShowTemplates(false);
     toast({
       title: "Template applied",

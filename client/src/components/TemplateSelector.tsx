@@ -27,6 +27,7 @@ export default function TemplateSelector({
       case 'product': return '📦';
       case 'social': return '📱';
       case 'artistic': return '🎨';
+      case 'advanced': return '🚀';
       default: return '✨';
     }
   };
@@ -37,6 +38,7 @@ export default function TemplateSelector({
       case 'product': return 'from-green-500 to-teal-600';
       case 'social': return 'from-pink-500 to-rose-600';
       case 'artistic': return 'from-orange-500 to-red-600';
+      case 'advanced': return 'from-purple-600 to-indigo-700';
       default: return 'from-gray-500 to-gray-600';
     }
   };

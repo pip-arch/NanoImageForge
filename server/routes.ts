@@ -65,6 +65,33 @@ async function signObjectURL({
   return signedURL;
 }
 
+// Helper function to get reference pose images for pose transfer
+function getPoseReferenceImage(prompt: string): string {
+  const promptLower = prompt.toLowerCase();
+  
+  // Map common pose descriptions to reference pose images
+  const poseReferences = {
+    'standing': 'https://picsum.photos/400/600?random=1', // Standing pose reference
+    'sitting': 'https://picsum.photos/400/600?random=2', // Sitting pose reference  
+    'walking': 'https://picsum.photos/400/600?random=3', // Walking pose reference
+    'running': 'https://picsum.photos/400/600?random=4', // Running pose reference
+    'dancing': 'https://picsum.photos/400/600?random=5', // Dancing pose reference
+    'waving': 'https://picsum.photos/400/600?random=6', // Waving pose reference
+    'arms crossed': 'https://picsum.photos/400/600?random=7', // Arms crossed reference
+    'hands up': 'https://picsum.photos/400/600?random=8', // Hands up reference
+  };
+  
+  // Find matching pose reference
+  for (const [poseKey, referenceUrl] of Object.entries(poseReferences)) {
+    if (promptLower.includes(poseKey)) {
+      return referenceUrl;
+    }
+  }
+  
+  // Default to standing pose if no specific pose is detected
+  return poseReferences.standing;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   const objectStorage = new ObjectStorageService();
 
@@ -256,17 +283,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
         settings
       });
 
-      const startTime = Date.now();
-      const requestBody = {
-        image_urls: [publicImageUrl],
-        prompt: prompt
-      };
-
-      console.log('fal.ai request body:', JSON.stringify(requestBody, null, 2));
-
-      console.log('Calling fal.ai API with endpoint: https://fal.run/fal-ai/nano-banana/edit');
+      // Determine which model to use based on settings
+      const modelType = settings.model || 'nano-banana';
+      let endpoint, requestBody;
       
-      const response = await fetch("https://fal.run/fal-ai/nano-banana/edit", {
+      const startTime = Date.now();
+
+      switch (modelType) {
+        case 'flux-image-to-image':
+          endpoint = 'https://fal.run/fal-ai/flux/dev/image-to-image';
+          requestBody = {
+            image_url: publicImageUrl,
+            prompt: prompt,
+            strength: settings.strength || 0.8
+          };
+          break;
+        
+        case 'leffa-pose-transfer':
+          endpoint = 'https://fal.run/fal-ai/leffa/pose-transfer';
+          // For pose transfer, we need a reference pose image
+          const referenceImageUrl = getPoseReferenceImage(prompt);
+          requestBody = {
+            person_image_url: publicImageUrl,  // The person whose pose we want to change
+            pose_image_url: referenceImageUrl, // The reference pose to apply
+            prompt: prompt
+          };
+          break;
+        
+        case 'flux-kontext-pro':
+          endpoint = 'https://fal.run/fal-ai/flux/kontext-pro';
+          requestBody = {
+            image_url: publicImageUrl,
+            prompt: prompt,
+            strength: settings.strength || 0.7
+          };
+          break;
+        
+        default:
+          // Default to nano-banana for basic editing
+          endpoint = 'https://fal.run/fal-ai/nano-banana/edit';
+          requestBody = {
+            image_urls: [publicImageUrl],
+            prompt: prompt
+          };
+          break;
+      }
+
+      console.log('fal.ai request details:', {
+        model: modelType,
+        endpoint,
+        requestBody: JSON.stringify(requestBody, null, 2)
+      });
+      
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

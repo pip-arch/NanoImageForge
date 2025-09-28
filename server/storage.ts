@@ -62,6 +62,27 @@ export class DatabaseStorage implements IStorage {
           category: "artistic",
           prompt: "Apply artistic style transformation with enhanced colors, creative composition, artistic filters",
           settings: { style: "artistic", enhancement: "creative" }
+        },
+        {
+          name: "Outfit Change",
+          description: "Change clothing style while preserving person",
+          category: "advanced",
+          prompt: "person wearing [OUTFIT_DESCRIPTION] instead of current clothes, maintaining the same pose and background",
+          settings: { model: "flux-image-to-image", strength: 0.8, advanced: true }
+        },
+        {
+          name: "Pose Alteration",
+          description: "Modify body pose and positioning",
+          category: "advanced", 
+          prompt: "person in [POSE_DESCRIPTION], maintaining facial features and clothing style",
+          settings: { model: "leffa-pose-transfer", advanced: true }
+        },
+        {
+          name: "Scene Enhancement",
+          description: "Sophisticated scene and context modifications",
+          category: "advanced",
+          prompt: "transform the scene to [SCENE_DESCRIPTION] while preserving the main subject",
+          settings: { model: "flux-kontext-pro", quality: "ultra", advanced: true }
         }
       ];
 
