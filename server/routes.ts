@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertEditSessionSchema, insertEditHistorySchema } from "@shared/schema";
 import { ObjectStorageService } from "./objectStorage";
+import { setupAuth, isAuthenticated } from "./replitAuth";
 
 // Import required functions for signed URL generation
 function parseObjectPath(path: string): {
@@ -93,7 +94,22 @@ function getPoseReferenceImage(prompt: string): string {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Auth middleware
+  await setupAuth(app);
+  
   const objectStorage = new ObjectStorageService();
+
+  // Auth routes
+  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      res.json(user);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
 
   // Public file serving endpoint
   app.get("/public-objects/:filePath(*)", async (req, res) => {
@@ -111,7 +127,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Object upload endpoint
-  app.post("/api/objects/upload", async (req, res) => {
+  app.post("/api/objects/upload", isAuthenticated, async (req: any, res) => {
     try {
       const uploadURL = await objectStorage.getObjectEntityUploadURL();
       res.json({ uploadURL });
@@ -155,9 +171,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Edit Sessions API
-  app.post("/api/sessions", async (req, res) => {
+  app.post("/api/sessions", isAuthenticated, async (req: any, res) => {
     try {
-      const validatedData = insertEditSessionSchema.parse(req.body);
+      const userId = req.user.claims.sub;
+      const validatedData = insertEditSessionSchema.parse({ ...req.body, userId });
       const session = await storage.createEditSession(validatedData);
       res.json(session);
     } catch (error) {
@@ -166,9 +183,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/sessions", async (req, res) => {
+  app.get("/api/sessions", isAuthenticated, async (req: any, res) => {
     try {
-      const sessions = await storage.getAllEditSessions();
+      const userId = req.user.claims.sub;
+      const sessions = await storage.getAllEditSessions(userId);
       res.json(sessions);
     } catch (error) {
       console.error("Error fetching sessions:", error);
@@ -176,9 +194,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/sessions/:id", async (req, res) => {
+  app.get("/api/sessions/:id", isAuthenticated, async (req: any, res) => {
     try {
-      const session = await storage.getEditSession(req.params.id);
+      const userId = req.user.claims.sub;
+      const session = await storage.getEditSession(req.params.id, userId);
       if (!session) {
         return res.status(404).json({ error: "Session not found" });
       }
@@ -190,10 +209,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get sessions by batch ID
-  app.get("/api/sessions/batch/:batchId", async (req, res) => {
+  app.get("/api/sessions/batch/:batchId", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const { batchId } = req.params;
-      const sessions = await storage.getSessionsByBatchId(batchId);
+      const sessions = await storage.getSessionsByBatchId(batchId, userId);
       res.json(sessions);
     } catch (error) {
       console.error("Error fetching batch sessions:", error);
@@ -201,10 +221,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/sessions/:id", async (req, res) => {
+  app.patch("/api/sessions/:id", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const updates = req.body;
-      const session = await storage.updateEditSession(req.params.id, updates);
+      const session = await storage.updateEditSession(req.params.id, updates, userId);
       if (!session) {
         return res.status(404).json({ error: "Session not found" });
       }
@@ -216,7 +237,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Process image with fal.ai
-  app.post("/api/process", async (req, res) => {
+  app.post("/api/process", isAuthenticated, async (req: any, res) => {
+    const userId = req.user.claims.sub;
     const { sessionId, prompt, imageUrl, settings = {} } = req.body;
 
     if (!sessionId || !prompt || !imageUrl) {
@@ -224,12 +246,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      // Update session to processing
-      await storage.updateEditSession(sessionId, {
+      // Verify session belongs to user and update to processing
+      const session = await storage.updateEditSession(sessionId, {
         status: 'processing',
         prompt,
         processingStartedAt: new Date(),
-      });
+      }, userId);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Session not found or access denied" });
+      }
 
       // Call fal.ai API
       const falApiKey = process.env.FAL_API_KEY;
@@ -461,8 +487,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Edit History API
-  app.get("/api/sessions/:sessionId/history", async (req, res) => {
+  app.get("/api/sessions/:sessionId/history", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
+      // First verify the session belongs to the user
+      const session = await storage.getEditSession(req.params.sessionId, userId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
       const history = await storage.getEditHistoryForSession(req.params.sessionId);
       res.json(history);
     } catch (error) {

@@ -1,14 +1,14 @@
-import { type EditSession, type InsertEditSession, type EditHistory, type InsertEditHistory, type Template, type InsertTemplate, editSessions, editHistory, templates } from "@shared/schema";
+import { type EditSession, type InsertEditSession, type EditHistory, type InsertEditHistory, type Template, type InsertTemplate, type User, type UpsertUser, editSessions, editHistory, templates, users } from "@shared/schema";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 export interface IStorage {
   // Edit Sessions
   createEditSession(session: InsertEditSession): Promise<EditSession>;
-  getEditSession(id: string): Promise<EditSession | undefined>;
-  updateEditSession(id: string, updates: Partial<EditSession>): Promise<EditSession | undefined>;
-  getAllEditSessions(): Promise<EditSession[]>;
-  getSessionsByBatchId(batchId: string): Promise<EditSession[]>;
+  getEditSession(id: string, userId?: string): Promise<EditSession | undefined>;
+  updateEditSession(id: string, updates: Partial<EditSession>, userId?: string): Promise<EditSession | undefined>;
+  getAllEditSessions(userId?: string): Promise<EditSession[]>;
+  getSessionsByBatchId(batchId: string, userId?: string): Promise<EditSession[]>;
   
   // Edit History
   addEditHistory(history: InsertEditHistory): Promise<EditHistory>;
@@ -19,6 +19,11 @@ export interface IStorage {
   getAllTemplates(): Promise<Template[]>;
   getTemplatesByCategory(category: string): Promise<Template[]>;
   getTemplate(id: string): Promise<Template | undefined>;
+  
+  // User operations
+  // (IMPORTANT) these user operations are mandatory for Replit Auth.
+  getUser(id: string): Promise<User | undefined>;
+  upsertUser(user: UpsertUser): Promise<User>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -104,35 +109,53 @@ export class DatabaseStorage implements IStorage {
     return session;
   }
 
-  async getEditSession(id: string): Promise<EditSession | undefined> {
+  async getEditSession(id: string, userId?: string): Promise<EditSession | undefined> {
+    const conditions = [eq(editSessions.id, id)];
+    if (userId) {
+      conditions.push(eq(editSessions.userId, userId));
+    }
+    
     const [session] = await db
       .select()
       .from(editSessions)
-      .where(eq(editSessions.id, id));
+      .where(conditions.length > 1 ? and(...conditions) : conditions[0]);
     return session || undefined;
   }
 
-  async updateEditSession(id: string, updates: Partial<EditSession>): Promise<EditSession | undefined> {
+  async updateEditSession(id: string, updates: Partial<EditSession>, userId?: string): Promise<EditSession | undefined> {
+    const conditions = [eq(editSessions.id, id)];
+    if (userId) {
+      conditions.push(eq(editSessions.userId, userId));
+    }
+    
     const [updated] = await db
       .update(editSessions)
       .set({ ...updates, updatedAt: new Date() })
-      .where(eq(editSessions.id, id))
+      .where(conditions.length > 1 ? and(...conditions) : conditions[0])
       .returning();
     return updated || undefined;
   }
 
-  async getAllEditSessions(): Promise<EditSession[]> {
-    return await db
-      .select()
-      .from(editSessions)
-      .orderBy(editSessions.createdAt);
+  async getAllEditSessions(userId?: string): Promise<EditSession[]> {
+    const query = db.select().from(editSessions);
+    
+    if (userId) {
+      query.where(eq(editSessions.userId, userId));
+    }
+    
+    return await query.orderBy(editSessions.createdAt);
   }
 
-  async getSessionsByBatchId(batchId: string): Promise<EditSession[]> {
+  async getSessionsByBatchId(batchId: string, userId?: string): Promise<EditSession[]> {
+    const conditions = [eq(editSessions.batchId, batchId)];
+    if (userId) {
+      conditions.push(eq(editSessions.userId, userId));
+    }
+    
     return await db
       .select()
       .from(editSessions)
-      .where(eq(editSessions.batchId, batchId))
+      .where(conditions.length > 1 ? and(...conditions) : conditions[0])
       .orderBy(editSessions.createdAt);
   }
 
@@ -184,6 +207,28 @@ export class DatabaseStorage implements IStorage {
       .from(templates)
       .where(eq(templates.id, id));
     return template || undefined;
+  }
+
+  // User operations
+  // (IMPORTANT) these user operations are mandatory for Replit Auth.
+  async getUser(id: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async upsertUser(userData: UpsertUser): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values(userData)
+      .onConflictDoUpdate({
+        target: users.id,
+        set: {
+          ...userData,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return user;
   }
 }
 
