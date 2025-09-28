@@ -137,13 +137,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllEditSessions(userId?: string): Promise<EditSession[]> {
-    const query = db.select().from(editSessions);
-    
     if (userId) {
-      query.where(eq(editSessions.userId, userId));
+      return await db
+        .select()
+        .from(editSessions)
+        .where(eq(editSessions.userId, userId))
+        .orderBy(editSessions.createdAt);
+    } else {
+      return await db
+        .select()
+        .from(editSessions)
+        .orderBy(editSessions.createdAt);
     }
-    
-    return await query.orderBy(editSessions.createdAt);
   }
 
   async getSessionsByBatchId(batchId: string, userId?: string): Promise<EditSession[]> {

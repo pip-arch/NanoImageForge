@@ -285,8 +285,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log('Generated signed URL for object path:', { imageUrl, publicImageUrl });
         } catch (error) {
           console.error('Failed to generate signed URL for object path:', error);
-          const baseUrl = req.protocol + '://' + req.get('host');
-          publicImageUrl = `${baseUrl}${imageUrl}`;
+          throw new Error('Failed to generate signed URL for image access');
         }
       } else if (imageUrl.startsWith('https://')) {
         // External URL - create a proxy endpoint for fal.ai to access
@@ -295,10 +294,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log('Normalized object path:', { imageUrl, normalizedPath });
           
           if (normalizedPath.startsWith('/objects/')) {
-            // Create a public proxy URL that fal.ai can access
-            const baseUrl = req.protocol + '://' + req.get('host');
-            publicImageUrl = `${baseUrl}/api/proxy-image?path=${encodeURIComponent(normalizedPath)}`;
-            console.log('Generated proxy URL for fal.ai:', { normalizedPath, publicImageUrl });
+            // Generate signed URL for fal.ai access instead of using proxy
+            try {
+              const { bucketName, objectName } = parseObjectPath(normalizedPath);
+              
+              const signedUrl = await signObjectURL({
+                bucketName,
+                objectName,
+                method: "GET",
+                ttlSec: 3600,
+              });
+              
+              publicImageUrl = signedUrl;
+              console.log('Generated signed URL for normalized path:', { normalizedPath, publicImageUrl });
+            } catch (error) {
+              console.error('Failed to generate signed URL for normalized path:', error);
+              throw new Error('Failed to generate signed URL for image access');
+            }
           } else {
             // If normalization didn't work, use the original URL
             publicImageUrl = imageUrl;
