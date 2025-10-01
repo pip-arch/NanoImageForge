@@ -137,8 +137,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Proxy endpoint for fal.ai to access private images (authentication required)
-  app.get("/api/proxy-image", isAuthenticated, async (req: any, res) => {
+  // Proxy endpoint for fal.ai to access private images (public for external API access)
+  app.get("/api/proxy-image", async (req, res) => {
     try {
       const objectPath = req.query.path as string;
       if (!objectPath || !objectPath.startsWith('/objects/')) {
@@ -150,7 +150,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Stream the file directly to the response
       await objectStorage.downloadObject(objectFile, res);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error proxying image:", error);
       if (error.name === 'ObjectNotFoundError') {
         return res.status(404).json({ error: "Image not found" });
@@ -269,24 +269,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('Processing image URL:', { imageUrl, type: typeof imageUrl });
       
       if (imageUrl.startsWith('/objects/')) {
-        // Standard object path - generate signed URL
-        try {
-          const objectFile = await objectStorage.getObjectEntityFile(imageUrl);
-          const { bucketName, objectName } = parseObjectPath(imageUrl);
-          
-          const signedUrl = await signObjectURL({
-            bucketName,
-            objectName,
-            method: "GET",
-            ttlSec: 3600,
-          });
-          
-          publicImageUrl = signedUrl;
-          console.log('Generated signed URL for object path:', { imageUrl, publicImageUrl });
-        } catch (error) {
-          console.error('Failed to generate signed URL for object path:', error);
-          throw new Error('Failed to generate signed URL for image access');
-        }
+        // Standard object path - create proxy URL for fal.ai
+        const baseUrl = req.protocol + '://' + req.get('host');
+        publicImageUrl = `${baseUrl}/api/proxy-image?path=${encodeURIComponent(imageUrl)}`;
+        console.log('Generated proxy URL for object path:', { imageUrl, publicImageUrl });
       } else if (imageUrl.startsWith('https://')) {
         // External URL - create a proxy endpoint for fal.ai to access
         try {
@@ -294,23 +280,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log('Normalized object path:', { imageUrl, normalizedPath });
           
           if (normalizedPath.startsWith('/objects/')) {
-            // Generate signed URL for fal.ai access instead of using proxy
-            try {
-              const { bucketName, objectName } = parseObjectPath(normalizedPath);
-              
-              const signedUrl = await signObjectURL({
-                bucketName,
-                objectName,
-                method: "GET",
-                ttlSec: 3600,
-              });
-              
-              publicImageUrl = signedUrl;
-              console.log('Generated signed URL for normalized path:', { normalizedPath, publicImageUrl });
-            } catch (error) {
-              console.error('Failed to generate signed URL for normalized path:', error);
-              throw new Error('Failed to generate signed URL for image access');
-            }
+            // Create a proxy URL that fal.ai can access
+            const baseUrl = req.protocol + '://' + req.get('host');
+            publicImageUrl = `${baseUrl}/api/proxy-image?path=${encodeURIComponent(normalizedPath)}`;
+            console.log('Generated proxy URL for fal.ai:', { normalizedPath, publicImageUrl });
           } else {
             // If normalization didn't work, use the original URL
             publicImageUrl = imageUrl;
