@@ -243,10 +243,13 @@ const useMockStorage = process.env.NODE_ENV === 'development' && !process.env.DA
 let storage: IStorage;
 
 if (useMockStorage) {
-  console.log('⚠️  Using mock storage (no database) - data will not persist!');
+  console.log('⚠️  Using MOCK STORAGE (in-memory) - data will not persist after restart!');
   const { MockStorage } = await import("./mockStorage.js");
   storage = new MockStorage();
 } else {
+  if (!db) {
+    throw new Error('Database not initialized. Set DATABASE_URL environment variable.');
+  }
   storage = new DatabaseStorage();
 }
 
