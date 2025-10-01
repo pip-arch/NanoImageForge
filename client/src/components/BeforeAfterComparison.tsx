@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 
 interface BeforeAfterComparisonProps {
@@ -7,11 +7,40 @@ interface BeforeAfterComparisonProps {
   showComparison: boolean;
 }
 
+// Helper function to convert Google Cloud Storage URLs to proxy URLs
+function getDisplayableImageUrl(imageUrl: string): string {
+  if (!imageUrl) return '';
+  
+  // If it's already a relative path or proxy URL, return as is
+  if (imageUrl.startsWith('/') || imageUrl.includes('/api/proxy-image')) {
+    return imageUrl;
+  }
+  
+  // If it's a Google Cloud Storage signed URL, extract the object path and use proxy
+  if (imageUrl.includes('storage.googleapis.com') && imageUrl.includes('/.private/')) {
+    try {
+      const url = new URL(imageUrl);
+      const pathMatch = url.pathname.match(/\/.private\/(.+)/);
+      if (pathMatch) {
+        const objectPath = `/objects/${pathMatch[1]}`;
+        return `/api/proxy-image?path=${encodeURIComponent(objectPath)}`;
+      }
+    } catch (e) {
+      console.error('Error parsing image URL:', e);
+    }
+  }
+  
+  // Return original URL as fallback
+  return imageUrl;
+}
+
 export default function BeforeAfterComparison({ 
   originalImage, 
   editedImage, 
   showComparison 
 }: BeforeAfterComparisonProps) {
+  const displayOriginalImage = useMemo(() => getDisplayableImageUrl(originalImage), [originalImage]);
+  const displayEditedImage = useMemo(() => editedImage ? getDisplayableImageUrl(editedImage) : null, [editedImage]);
   const [sliderPosition, setSliderPosition] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -49,20 +78,20 @@ export default function BeforeAfterComparison({
         >
           {/* Original Image */}
           <img 
-            src={originalImage} 
+            src={displayOriginalImage} 
             alt="Original image" 
             className="absolute inset-0 w-full h-full object-contain bg-black/5"
           />
           
           {/* Edited Image Overlay */}
-          {editedImage && showComparison && (
+          {displayEditedImage && showComparison && (
             <>
               <div 
                 className="absolute inset-0 overflow-hidden"
                 style={{ clipPath: `polygon(${sliderPosition}% 0%, 100% 0%, 100% 100%, ${sliderPosition}% 100%)` }}
               >
                 <img 
-                  src={editedImage} 
+                  src={displayEditedImage} 
                   alt="Edited image" 
                   className="w-full h-full object-contain bg-black/5"
                 />
@@ -93,9 +122,9 @@ export default function BeforeAfterComparison({
           )}
           
           {/* Single Image View */}
-          {editedImage && !showComparison && (
+          {displayEditedImage && !showComparison && (
             <img 
-              src={editedImage} 
+              src={displayEditedImage} 
               alt="Edited image" 
               className="absolute inset-0 w-full h-full object-contain bg-black/5"
             />
