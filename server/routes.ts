@@ -3,8 +3,25 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertEditSessionSchema, insertEditHistorySchema } from "@shared/schema";
 import { ObjectStorageService } from "./objectStorage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
 import crypto from "crypto";
+
+// Check if running in development mode without Replit
+const isDevelopment = process.env.NODE_ENV === 'development' && !process.env.REPLIT_DOMAINS;
+
+let setupAuth: any;
+let isAuthenticated: any;
+
+if (isDevelopment) {
+  console.log('🔧 Loading development authentication...');
+  const devAuth = await import("./devAuth.js");
+  setupAuth = devAuth.setupDevAuth;
+  isAuthenticated = devAuth.isDevAuthenticated;
+} else {
+  console.log('🔒 Loading Replit authentication...');
+  const replitAuth = await import("./replitAuth.js");
+  setupAuth = replitAuth.setupAuth;
+  isAuthenticated = replitAuth.isAuthenticated;
+}
 
 // Import required functions for signed URL generation
 function parseObjectPath(path: string): {
