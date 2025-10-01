@@ -140,7 +140,6 @@ export default function BatchProcessor({ onBatchComplete }: BatchProcessorProps)
             body: JSON.stringify({
               sessionId: session.id,
               prompt: prompt.trim(),
-              imageUrl: session.originalImageUrl,
               settings,
             }),
           });

@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertEditSessionSchema, insertEditHistorySchema } from "@shared/schema";
 import { ObjectStorageService } from "./objectStorage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import crypto from "crypto";
 
 // Import required functions for signed URL generation
 function parseObjectPath(path: string): {
@@ -64,6 +65,54 @@ async function signObjectURL({
 
   const { signed_url: signedURL } = await response.json();
   return signedURL;
+}
+
+// Helper function to create time-limited signed token for proxy access
+function createProxyToken(objectPath: string, userId: string, ttlSeconds: number = 3600): string {
+  const expiresAt = Date.now() + (ttlSeconds * 1000);
+  const data = `${objectPath}|${userId}|${expiresAt}`;
+  const signature = crypto
+    .createHmac('sha256', process.env.SESSION_SECRET!)
+    .update(data)
+    .digest('base64url');
+  
+  return Buffer.from(JSON.stringify({
+    path: objectPath,
+    userId,
+    expiresAt,
+    signature
+  })).toString('base64url');
+}
+
+// Helper function to verify proxy token
+function verifyProxyToken(token: string): { path: string; userId: string } | null {
+  try {
+    const decoded = JSON.parse(Buffer.from(token, 'base64url').toString());
+    const { path, userId, expiresAt, signature } = decoded;
+    
+    // Check expiration
+    if (Date.now() > expiresAt) {
+      console.error('Token expired');
+      return null;
+    }
+    
+    // Verify signature
+    const data = `${path}|${userId}|${expiresAt}`;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.SESSION_SECRET!)
+      .update(data)
+      .digest('base64url');
+    
+    if (signature !== expectedSignature) {
+      console.error('Invalid token signature');
+      return null;
+    }
+    
+    return { path, userId };
+  } catch (error) {
+    console.error('Error verifying token:', error);
+    return null;
+  }
 }
 
 // Helper function to get reference pose images for pose transfer
@@ -137,16 +186,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Proxy endpoint for fal.ai to access private images (public for external API access)
+  // Generate signed proxy token for frontend image display
+  app.post("/api/proxy-token", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { objectPath } = req.body;
+      
+      if (!objectPath || !objectPath.startsWith('/objects/')) {
+        return res.status(400).json({ error: "Invalid object path" });
+      }
+      
+      // Verify object ownership via session lookup
+      const sessions = await storage.getAllEditSessions(userId);
+      const ownsObject = sessions.some(
+        session => session.originalImageUrl === objectPath || session.currentImageUrl === objectPath
+      );
+      
+      if (!ownsObject) {
+        console.error(`Ownership check failed: User ${userId} does not own ${objectPath}`);
+        return res.status(403).json({ error: "Access denied: You do not own this object" });
+      }
+      
+      const token = createProxyToken(objectPath, userId, 3600); // 1 hour expiry for display
+      const baseUrl = req.protocol + '://' + req.get('host');
+      const proxyUrl = `${baseUrl}/api/proxy-image?token=${token}`;
+      
+      res.json({ proxyUrl });
+    } catch (error) {
+      console.error("Error generating proxy token");
+      res.status(500).json({ error: "Failed to generate proxy token" });
+    }
+  });
+
+  // Proxy endpoint for fal.ai to access private images (secured with signed tokens)
   app.get("/api/proxy-image", async (req, res) => {
     try {
-      const objectPath = req.query.path as string;
+      const token = req.query.token as string;
+      
+      if (!token) {
+        return res.status(401).json({ error: "Missing access token" });
+      }
+
+      // Verify the token
+      const verified = verifyProxyToken(token);
+      if (!verified) {
+        return res.status(401).json({ error: "Invalid or expired token" });
+      }
+
+      const { path: objectPath } = verified;
+      
       if (!objectPath || !objectPath.startsWith('/objects/')) {
         return res.status(400).json({ error: "Invalid object path" });
       }
 
-      console.log('Proxy request for object path:', objectPath);
       const objectFile = await objectStorage.getObjectEntityFile(objectPath);
+      
+      // Prevent caching of sensitive proxy URLs
+      res.setHeader('Cache-Control', 'no-store, private');
       
       // Stream the file directly to the response
       await objectStorage.downloadObject(objectFile, res);
@@ -174,7 +270,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/sessions", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const validatedData = insertEditSessionSchema.parse({ ...req.body, userId });
+      let { originalImageUrl, ...restData } = req.body;
+      
+      // Normalize Google Cloud Storage URLs to object paths for stable storage
+      if (originalImageUrl && originalImageUrl.includes('storage.googleapis.com')) {
+        try {
+          const normalizedPath = await objectStorage.normalizeObjectEntityPath(originalImageUrl);
+          if (normalizedPath.startsWith('/objects/')) {
+            originalImageUrl = normalizedPath;
+          }
+        } catch (error) {
+          console.error('Failed to normalize image URL:', error);
+          // Continue with original URL if normalization fails
+        }
+      }
+      
+      const validatedData = insertEditSessionSchema.parse({ 
+        ...restData, 
+        originalImageUrl,
+        userId 
+      });
       const session = await storage.createEditSession(validatedData);
       res.json(session);
     } catch (error) {
@@ -239,10 +354,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Process image with fal.ai
   app.post("/api/process", isAuthenticated, async (req: any, res) => {
     const userId = req.user.claims.sub;
-    const { sessionId, prompt, imageUrl, settings = {} } = req.body;
+    const { sessionId, prompt, settings = {} } = req.body;
 
-    if (!sessionId || !prompt || !imageUrl) {
-      return res.status(400).json({ error: "Missing required fields: sessionId, prompt, imageUrl" });
+    if (!sessionId || !prompt) {
+      return res.status(400).json({ error: "Missing required fields: sessionId, prompt" });
     }
 
     try {
@@ -256,6 +371,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!session) {
         return res.status(404).json({ error: "Session not found or access denied" });
       }
+      
+      // Use the imageUrl from the session (ownership already verified)
+      const imageUrl = session.originalImageUrl;
 
       // Call fal.ai API
       const falApiKey = process.env.FAL_API_KEY;
@@ -269,10 +387,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log('Processing image URL:', { imageUrl, type: typeof imageUrl });
       
       if (imageUrl.startsWith('/objects/')) {
-        // Standard object path - create proxy URL for fal.ai
+        // Standard object path - create signed proxy URL for fal.ai
+        const token = createProxyToken(imageUrl, userId, 7200); // 2 hour expiry
         const baseUrl = req.protocol + '://' + req.get('host');
-        publicImageUrl = `${baseUrl}/api/proxy-image?path=${encodeURIComponent(imageUrl)}`;
-        console.log('Generated proxy URL for object path:', { imageUrl, publicImageUrl });
+        publicImageUrl = `${baseUrl}/api/proxy-image?token=${token}`;
       } else if (imageUrl.startsWith('https://')) {
         // External URL - create a proxy endpoint for fal.ai to access
         try {
@@ -280,10 +398,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.log('Normalized object path:', { imageUrl, normalizedPath });
           
           if (normalizedPath.startsWith('/objects/')) {
-            // Create a proxy URL that fal.ai can access
+            // Create a signed proxy URL that fal.ai can access
+            const token = createProxyToken(normalizedPath, userId, 7200); // 2 hour expiry
             const baseUrl = req.protocol + '://' + req.get('host');
-            publicImageUrl = `${baseUrl}/api/proxy-image?path=${encodeURIComponent(normalizedPath)}`;
-            console.log('Generated proxy URL for fal.ai:', { normalizedPath, publicImageUrl });
+            publicImageUrl = `${baseUrl}/api/proxy-image?token=${token}`;
           } else {
             // If normalization didn't work, use the original URL
             publicImageUrl = imageUrl;
@@ -299,12 +417,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('Image URL is already a full URL:', imageUrl);
       }
 
-      console.log('Processing image with fal.ai:', {
-        originalImageUrl: imageUrl,
-        publicImageUrl,
-        prompt,
-        settings
-      });
+      console.log('Processing image with fal.ai');
 
       // Determine which model to use based on settings
       const modelType = settings.model || 'nano-banana';
@@ -352,11 +465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           break;
       }
 
-      console.log('fal.ai request details:', {
-        model: modelType,
-        endpoint,
-        requestBody: JSON.stringify(requestBody, null, 2)
-      });
+      console.log('fal.ai request:', { model: modelType, endpoint });
       
       const response = await fetch(endpoint, {
         method: "POST",

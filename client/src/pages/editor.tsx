@@ -79,7 +79,7 @@ export default function Editor() {
 
   // Process image mutation
   const processImageMutation = useMutation({
-    mutationFn: async (data: { sessionId: string; prompt: string; imageUrl: string; settings?: any }) => {
+    mutationFn: async (data: { sessionId: string; prompt: string; settings?: any }) => {
       const response = await fetch('/api/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -134,7 +134,6 @@ export default function Editor() {
     processImageMutation.mutate({
       sessionId: currentSessionId,
       prompt: prompt.trim(),
-      imageUrl: currentSession.originalImageUrl,
       settings,
     });
   }, [currentSessionId, currentSession, prompt, quality, outputFormat, processingSpeed, processImageMutation]);

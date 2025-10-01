@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 
 interface BeforeAfterComparisonProps {
@@ -7,31 +7,32 @@ interface BeforeAfterComparisonProps {
   showComparison: boolean;
 }
 
-// Helper function to convert Google Cloud Storage URLs to proxy URLs
-function getDisplayableImageUrl(imageUrl: string): string {
-  if (!imageUrl) return '';
-  
-  // If it's already a relative path or proxy URL, return as is
-  if (imageUrl.startsWith('/') || imageUrl.includes('/api/proxy-image')) {
-    return imageUrl;
+// Helper function to fetch signed proxy URL for object paths
+async function getProxyUrl(objectPath: string): Promise<string> {
+  if (!objectPath || !objectPath.startsWith('/objects/')) {
+    return objectPath; // Return as-is if not an object path
   }
   
-  // If it's a Google Cloud Storage signed URL, extract the object path and use proxy
-  if (imageUrl.includes('storage.googleapis.com') && imageUrl.includes('/.private/')) {
-    try {
-      const url = new URL(imageUrl);
-      const pathMatch = url.pathname.match(/\/.private\/(.+)/);
-      if (pathMatch) {
-        const objectPath = `/objects/${pathMatch[1]}`;
-        return `/api/proxy-image?path=${encodeURIComponent(objectPath)}`;
-      }
-    } catch (e) {
-      console.error('Error parsing image URL:', e);
+  try {
+    const response = await fetch('/api/proxy-token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ objectPath }),
+      credentials: 'include',
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch proxy URL');
     }
+    
+    const data = await response.json();
+    return data.proxyUrl;
+  } catch (error) {
+    console.error('Error fetching proxy URL:', error);
+    return objectPath; // Fallback to original path
   }
-  
-  // Return original URL as fallback
-  return imageUrl;
 }
 
 export default function BeforeAfterComparison({ 
@@ -39,11 +40,27 @@ export default function BeforeAfterComparison({
   editedImage, 
   showComparison 
 }: BeforeAfterComparisonProps) {
-  const displayOriginalImage = useMemo(() => getDisplayableImageUrl(originalImage), [originalImage]);
-  const displayEditedImage = useMemo(() => editedImage ? getDisplayableImageUrl(editedImage) : null, [editedImage]);
+  const [displayOriginalImage, setDisplayOriginalImage] = useState<string>('');
+  const [displayEditedImage, setDisplayEditedImage] = useState<string | null>(null);
   const [sliderPosition, setSliderPosition] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch signed proxy URL for original image
+  useEffect(() => {
+    if (originalImage) {
+      getProxyUrl(originalImage).then(setDisplayOriginalImage);
+    }
+  }, [originalImage]);
+
+  // Fetch signed proxy URL for edited image
+  useEffect(() => {
+    if (editedImage) {
+      getProxyUrl(editedImage).then(setDisplayEditedImage);
+    } else {
+      setDisplayEditedImage(null);
+    }
+  }, [editedImage]);
 
   const handleMouseDown = useCallback(() => {
     setIsDragging(true);
